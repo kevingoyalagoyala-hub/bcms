@@ -1,10 +1,24 @@
 const express = require('express');
 const bcrypt = require('bcryptjs');
+const multer = require('multer');
+const fs = require('fs');
+const path = require('path');
 const { v4: uuidv4 } = require('uuid');
 const pool = require('../config/db');
-const { requireAuth, requireAdmin } = require('../middleware/auth');
+const { requireAuth, requireAdmin, requireResident } = require('../middleware/auth');
 
 const router = express.Router();
+
+const UPLOAD_DIR = process.env.UPLOAD_DIR || 'uploads';
+const photoStorage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    const dir = path.join(UPLOAD_DIR, 'residents', req.user.id);
+    fs.mkdirSync(dir, { recursive: true });
+    cb(null, dir);
+  },
+  filename: (req, file, cb) => cb(null, `photo-${Date.now()}${path.extname(file.originalname)}`),
+});
+const uploadPhoto = multer({ storage: photoStorage, limits: { fileSize: 3 * 1024 * 1024 } });
 
 function toSafe(row) {
   if (!row) return row;
@@ -115,6 +129,28 @@ router.patch('/:id/status', requireAuth, requireAdmin, async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Failed to update status.' });
+  }
+});
+
+/**
+ * PATCH /api/residents/me — resident self-service update: profile photo + bio only.
+ * Official record fields (name, address, civil status, etc.) are intentionally NOT
+ * editable here — those require staff verification via the admin PUT /:id route.
+ */
+router.patch('/me', requireAuth, requireResident, uploadPhoto.single('photo'), async (req, res) => {
+  try {
+    const sets = [];
+    const params = [];
+    if (req.body.bio !== undefined) { sets.push('bio = ?'); params.push(String(req.body.bio).slice(0, 300)); }
+    if (req.file) { sets.push('photo_path = ?'); params.push(req.file.path.replace(/\\/g, '/')); }
+    if (!sets.length) return res.status(400).json({ error: 'Nothing to update.' });
+    params.push(req.user.id);
+    await pool.query(`UPDATE residents SET ${sets.join(', ')} WHERE id = ?`, params);
+    const [rows] = await pool.query('SELECT * FROM residents WHERE id = ?', [req.user.id]);
+    res.json(toSafe(rows[0]));
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Failed to update your profile.' });
   }
 });
 

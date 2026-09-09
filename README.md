@@ -34,16 +34,20 @@ bcms/
 ## 2. Architecture at a glance
 
 - **Frontend**: a single-page app (SPA) with hash-based routing (`#/resident/dashboard`,
-  `#/admin/requests`, etc.). No framework, no build tools — open `index.html` and it runs.
-  Currently ships with an **in-memory demo dataset** (see top of `app.js`) so it's fully
-  clickable out of the box with zero setup.
-- **Backend**: a REST API (Express) backed by MySQL, with JWT-based authentication for two
-  roles (`resident`, `admin`), password hashing (bcrypt), and file uploads (multer) for ID
-  photos, valid IDs, DTI documents, etc.
-- **Connecting them**: the frontend is not wired to the backend by default (see §5). Until
-  you connect it, the frontend runs standalone with demo data; the backend runs standalone
-  as a testable API. Wiring them together is a mechanical step of replacing `DB.*` reads in
-  `app.js` with `fetch()` calls — documented in `backend/README.md` §3.
+  `#/admin/requests`, etc.). No framework, no build tools. It's **fully wired to the
+  backend API** — login, registration, document requests, approvals, announcements,
+  profile photo/bio, and certificates all talk to real endpoints via `fetch()`
+  (see `frontend/js/app.js`, `API_BASE` near the top).
+- **Backend**: a REST API (Express) with JWT-based authentication for two roles
+  (`resident`, `admin`), password hashing (bcrypt), and file uploads (multer) for
+  ID photos, valid IDs, DTI documents, etc. Two ways to run it:
+  - `node mock-server.js` — in-memory, zero-install, data resets on restart. Great
+    for trying the whole connected app in under a minute.
+  - `npm start` (`server.js`) — real MySQL, persistent. See `backend/README.md`.
+- **Connecting them**: nothing to wire — just start whichever backend you want
+  (mock or MySQL) on port 4000 and open `frontend/index.html`. If you deploy them
+  to different places, set `window.BCMS_API_BASE` in `index.html` to your backend's
+  URL before `app.js` loads.
 
 ## 3. UI/UX structure
 
@@ -71,17 +75,21 @@ Full request/response details are in `backend/README.md`.
 
 ## 5. Running everything locally
 
-See the step-by-step VS Code walkthrough below. Short version:
-
-**Frontend** — no install needed:
+**Fastest way (no MySQL needed):**
 ```bash
-cd frontend
-# open index.html directly, or serve it (recommended, avoids any file:// quirks):
-python3 -m http.server 5500
-# then visit http://localhost:5500
-```
+cd backend
+npm install
+node mock-server.js          # backend on http://localhost:4000, in-memory data
 
-**Backend**:
+# in a second terminal:
+cd frontend
+python3 -m http.server 5500  # frontend on http://localhost:5500
+```
+Open http://localhost:5500 — the whole connected app works: register, log in,
+submit requests, approve them as staff, print certificates. Data resets when you
+restart `mock-server.js`.
+
+**Real, persistent version (MySQL):**
 ```bash
 cd backend
 npm install
@@ -89,9 +97,11 @@ cp .env.example .env      # edit with your MySQL credentials
 npm run migrate           # creates tables + seeds demo accounts
 npm start                 # http://localhost:4000
 ```
+Then serve `frontend/` the same way as above.
 
-Demo accounts (frontend, in-memory): Resident `juan.delacruz` / `resident123` · Staff
-`admin` / `admin123`.
+Demo accounts (seeded by both the mock server and `npm run migrate`): Resident
+`juan.delacruz` / `resident123` · Staff `admin` / `admin123`. You can also just
+register a brand-new resident account from the login page.
 
 ## 6. License
 

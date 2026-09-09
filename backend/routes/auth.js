@@ -1,5 +1,6 @@
 const express = require('express');
 const bcrypt = require('bcryptjs');
+const { v4: uuidv4 } = require('uuid');
 const pool = require('../config/db');
 const { signToken, requireAuth } = require('../middleware/auth');
 
@@ -47,6 +48,43 @@ router.post('/login', async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Login failed due to a server error.' });
+  }
+});
+
+/**
+ * POST /api/auth/register
+ * Public self-service registration for residents (not staff — admin accounts are
+ * created by other staff via the admin panel, never self-registered).
+ * body: firstName, lastName, middleName?, suffix?, birthdate, sex, civilStatus,
+ *       purok, contactNumber, email?, username, password
+ */
+router.post('/register', async (req, res) => {
+  const b = req.body;
+  const required = ['firstName','lastName','birthdate','sex','civilStatus','purok','contactNumber','username','password'];
+  for (const f of required) if (!b[f]) return res.status(400).json({ error: `${f} is required.` });
+  if (String(b.password).length < 6) return res.status(400).json({ error: 'Password must be at least 6 characters.' });
+
+  try {
+    const [dupe] = await pool.query('SELECT id FROM residents WHERE username = ?', [b.username]);
+    if (dupe.length) return res.status(409).json({ error: 'That username is already taken. Please choose another.' });
+
+    const id = uuidv4();
+    const passwordHash = await bcrypt.hash(b.password, 10);
+    const address = `${b.purok}, Barangay Capacuhan`;
+
+    await pool.query(
+      `INSERT INTO residents (id, username, password_hash, first_name, middle_name, last_name, suffix, birthdate, sex, civil_status, purok, address, contact_number, email, years_of_residency, status)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,0,'Active')`,
+      [id, b.username, passwordHash, b.firstName, b.middleName || null, b.lastName, b.suffix || null, b.birthdate, b.sex, b.civilStatus, b.purok, address, b.contactNumber, b.email || null]
+    );
+
+    const token = signToken({ id, role: 'resident', username: b.username });
+    const [rows] = await pool.query('SELECT * FROM residents WHERE id = ?', [id]);
+    const { password_hash, ...safe } = rows[0];
+    res.status(201).json({ token, user: safe });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Registration failed due to a server error.' });
   }
 });
 

@@ -1,18 +1,98 @@
 /* =========================================================================
    Brgy Capacuhan Management System (BCMS)  —  Frontend Application
    Barangay Capacuhan, Oquendo District, Calbayog City, Samar, Philippines
-   Front-end demo build: all data lives in memory (see DB object below).
-   Wire this up to the included backend (Node/Express + MySQL) by replacing
-   the DB.* helper functions with fetch() calls to the API routes — the
-   shapes of the objects already match the /api responses documented in
-   backend/README.md.
+   Connected to the BCMS backend API (Node/Express + MySQL, or mock-server.js
+   for zero-install local testing). See API_BASE below to point this at your
+   backend. DB.* below is a client-side CACHE hydrated from the API — not
+   hardcoded demo data. See backend/README.md for the full API reference.
    ========================================================================= */
+
+/* ----------------------------- API CONFIG ----------------------------- */
+// Change this if your backend runs somewhere else (e.g. your deployed API URL).
+const API_BASE = (window.BCMS_API_BASE) || 'http://localhost:4000/api';
+const SERVER_ORIGIN = API_BASE.replace(/\/api\/?$/, '');
+let AUTH_TOKEN = null;
+
+async function api(path, opts = {}) {
+  const headers = Object.assign({}, opts.headers || {});
+  if (AUTH_TOKEN) headers['Authorization'] = 'Bearer ' + AUTH_TOKEN;
+  const isForm = (typeof FormData !== 'undefined') && opts.body instanceof FormData;
+  if (!isForm && opts.body && !headers['Content-Type']) headers['Content-Type'] = 'application/json';
+  let res;
+  try {
+    res = await fetch(API_BASE + path, Object.assign({}, opts, { headers }));
+  } catch (netErr) {
+    const err = new Error('Could not reach the server. Is the backend running at ' + API_BASE + '?');
+    err.network = true;
+    throw err;
+  }
+  let data = null;
+  try { data = await res.json(); } catch (e) { /* empty body */ }
+  if (!res.ok) {
+    const err = new Error((data && data.error) || `Request failed (${res.status})`);
+    err.status = res.status;
+    throw err;
+  }
+  return data;
+}
+
+function fileUrl(v) { return (v && typeof v === 'string' && v.startsWith('/')) ? SERVER_ORIGIN + v : v; }
+
+/* ----------------------------- SERVER <-> UI FIELD MAPPING -----------------------------
+   The API returns snake_case columns (matching MySQL); the UI throughout uses
+   camelCase. These mappers convert at the fetch boundary so the rest of the
+   app never has to think about it. */
+function mapResident(r){
+  if (!r) return r;
+  return {
+    id:r.id, username:r.username, firstName:r.first_name, middleName:r.middle_name||'', lastName:r.last_name, suffix:r.suffix||'',
+    birthdate:r.birthdate, sex:r.sex, civilStatus:r.civil_status, purok:r.purok, address:r.address,
+    contactNumber:r.contact_number, email:r.email||'', occupation:r.occupation||'', yearsOfResidency:r.years_of_residency||0,
+    photoDataUrl: fileUrl(r.photo_path) || '', bio: r.bio||'', status:r.status, dateRegistered:r.date_registered,
+  };
+}
+function mapAdmin(a){
+  if (!a) return a;
+  return { id:a.id, username:a.username, fullName:a.full_name, role:a.role };
+}
+function mapRequest(r){
+  if (!r) return r;
+  let formData = r.form_data;
+  if (typeof formData === 'string') { try { formData = JSON.parse(formData); } catch(e){ formData = {}; } }
+  return {
+    id:r.id, refNo:r.ref_no, residentId:r.resident_id, docType:r.doc_key, formData: formData||{},
+    status:r.status, remarks:r.remarks||'', dateRequested:r.date_requested, dateUpdated:r.date_updated,
+  };
+}
+function mapAnnouncement(a){
+  if (!a) return a;
+  return { id:a.id, title:a.title, body:a.body, author:a.author, pinned: !!a.pinned, date:a.posted_date };
+}
+
+/** Fetches everything the current session needs right after login/register. */
+async function loadInitialData(role){
+  const anns = await api('/announcements');
+  DB.announcements = anns.map(mapAnnouncement);
+  if (role === 'resident'){
+    const reqs = await api('/requests/mine');
+    DB.requests = reqs.map(mapRequest);
+  } else {
+    const [residents, reqs] = await Promise.all([api('/residents'), api('/requests')]);
+    DB.residents = residents.map(mapResident);
+    DB.requests = reqs.map(mapRequest);
+  }
+}
+async function refreshResidents(){ DB.residents = (await api('/residents')).map(mapResident); }
+async function refreshAllRequests(){ DB.requests = (await api('/requests')).map(mapRequest); }
+async function refreshMyRequests(){ DB.requests = (await api('/requests/mine')).map(mapRequest); }
+async function refreshAnnouncements(){ DB.announcements = (await api('/announcements')).map(mapAnnouncement); }
 
 /* ----------------------------- ICONS (inline SVG) ----------------------------- */
 const ICONS = {
   dashboard:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg>`,
   docs:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3h6l5 5v11a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Z"/><path d="M14 3v5h5"/><path d="M9 13h6M9 17h6"/></svg>`,
   requests:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3 8-8"/><path d="M21 12v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h11"/></svg>`,
+
   bell:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>`,
   user:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="4"/><path d="M4 21c0-4 4-7 8-7s8 3 8 7"/></svg>`,
   logout:`<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5"/><path d="M21 12H9"/></svg>`,
@@ -174,46 +254,14 @@ const DOC_TYPES = [
 ];
 function docType(key){ return DOC_TYPES.find(d=>d.key===key); }
 
-/* ----------------------------- IN-MEMORY DATABASE (SAMPLE DATA) ----------------------------- */
+/* ----------------------------- CLIENT-SIDE CACHE (hydrated from the API) ----------------------------- */
 const DB = {
   puno_barangay: 'Leo M. Mag-Ampo',
-  admins: [
-    {id:'ad1', username:'admin', password:'admin123', fullName:'Leo M. Mag-Ampo', role:'Punong Barangay'},
-    {id:'ad2', username:'staff', password:'staff123', fullName:'Maria S. Villanueva', role:'Barangay Secretary'},
-  ],
-  residents: [
-    {id:'r1', username:'juan.delacruz', password:'resident123', firstName:'Juan', middleName:'Santos', lastName:'Dela Cruz', suffix:'', birthdate:'1990-04-12', sex:'Male', civilStatus:'Married', purok:'Purok 2', address:'Purok 2, Barangay Capacuhan', contactNumber:'0917-234-5678', email:'juan.delacruz@example.com', yearsOfResidency:15, occupation:'Tricycle Driver', dateRegistered:'2023-01-10', status:'Active', photoDataUrl:'', bio:'Proud tricycle driver and father of two, serving the Capacuhan community routes for over a decade.'},
-    {id:'r2', username:'maria.reyes', password:'resident123', firstName:'Maria', middleName:'Luna', lastName:'Reyes', suffix:'', birthdate:'1985-09-23', sex:'Female', civilStatus:'Widowed', purok:'Purok 4', address:'Purok 4, Barangay Capacuhan', contactNumber:'0928-555-1122', email:'maria.reyes@example.com', yearsOfResidency:22, occupation:'Sari-sari Store Owner', dateRegistered:'2023-02-14', status:'Active', photoDataUrl:'', bio:'Runs the neighborhood sari-sari store at Purok 4. Always happy to help fellow residents.'},
-    {id:'r3', username:'pedro.santos', password:'resident123', firstName:'Pedro', middleName:'Cruz', lastName:'Santos', suffix:'Jr.', birthdate:'2002-11-05', sex:'Male', civilStatus:'Single', purok:'Purok 1', address:'Purok 1, Barangay Capacuhan', contactNumber:'0939-888-4433', email:'pedro.santos@example.com', yearsOfResidency:20, occupation:'Student / First-time Job Seeker', dateRegistered:'2023-05-30', status:'Active', photoDataUrl:'', bio:''},
-    {id:'r4', username:'ana.gonzales', password:'resident123', firstName:'Ana', middleName:'Marie', lastName:'Gonzales', suffix:'', birthdate:'1979-02-17', sex:'Female', civilStatus:'Separated', purok:'Purok 3', address:'Purok 3, Barangay Capacuhan', contactNumber:'0947-321-7788', email:'ana.gonzales@example.com', yearsOfResidency:30, occupation:'Solo Parent / Vendor', dateRegistered:'2022-11-02', status:'Active', photoDataUrl:'', bio:'Solo parent of two, small vendor at the public market.'},
-  ],
-  requests: [],
-  announcements: [
-    {id:'an1', title:'Free Anti-Rabies Vaccination for Pets', body:'The Barangay Health Center, in partnership with the City Veterinary Office, will conduct a free anti-rabies vaccination drive for dogs and cats on September 14, 2026 (Monday), 8:00 AM at the Barangay Covered Court. Bring your pets on a leash or in a carrier.', date:'2026-09-03', author:'Barangay Health Center', pinned:true},
-    {id:'an2', title:'Schedule of Barangay Assembly Meeting', body:'All residents are invited to attend the Quarterly Barangay Assembly on September 20, 2026, 9:00 AM at the Barangay Hall. Agenda includes budget transparency report and community concerns.', date:'2026-09-01', author:'Office of the Punong Barangay', pinned:false},
-    {id:'an3', title:'Reminder: Update Your Resident Records', body:'Residents are reminded to update their household profile at the Barangay Hall for the ongoing census. This ensures accurate records for document requests and assistance programs.', date:'2026-08-27', author:'Barangay Secretary', pinned:false},
-  ],
+  admins: [],       // populated on admin login
+  residents: [],    // populated on login (own profile for residents, full list for admins)
+  requests: [],     // populated on login / after mutations
+  announcements: [],// populated on login / after mutations
 };
-
-/* Seed sample requests referencing the residents above, across all statuses */
-(function seedRequests(){
-  const mk = (id, residentId, docKey, formData, status, daysAgo, remarks)=>{
-    const d = new Date(); d.setDate(d.getDate()-daysAgo);
-    const u = new Date(); u.setDate(u.getDate()-Math.max(0,daysAgo-1));
-    return {id, refNo:'BCMS-2026-'+String(1000+Number(id.replace('rq',''))), residentId, docType:docKey, formData, status,
-      dateRequested:d.toISOString(), dateUpdated:u.toISOString(), remarks:remarks||''};
-  };
-  DB.requests.push(
-    mk('rq1','r1','clearance',{purpose:'Employment'}, 'Released', 9, 'Released to requesting party. OR #2026-0451'),
-    mk('rq2','r2','indigency',{purpose:'Medical Assistance'}, 'Approved', 5, 'Approved by Punong Barangay, ready for release.'),
-    mk('rq3','r3','jobseeker',{intendedEmployer:'Calbayog Public Market Cooperative'}, 'Ready for Pickup', 3, 'Certificate printed, awaiting claim.'),
-    mk('rq4','r4','soloparent',{numberOfChildren:2, purpose:'Solo Parent ID Application'}, 'Pending', 1, ''),
-    mk('rq5','r1','residency',{yearsOfResidency:15, purpose:'Loan Application'}, 'Pending', 0, ''),
-    mk('rq6','r2','business',{businessName:'Aling Maria Sari-Sari Store', businessAddress:'Purok 4, Barangay Capacuhan', businessType:'Sari-sari Store', natureOfBusiness:'Retail of basic household goods and snacks'}, 'Rejected', 6, 'Incomplete requirements — please submit updated DTI registration.'),
-    mk('rq7','r3','brgyid',{contactNumber:'0939-888-4433', emergencyName:'Rosa Santos', emergencyNumber:'0917-000-1111'}, 'Approved', 2, 'Verified. Proceed to encoding for ID printing.'),
-    mk('rq8','r4','lowincome',{monthlyIncome:5500, sourceOfIncome:'Vending / sari-sari sales', purpose:'Scholarship Application'}, 'Pending', 0, ''),
-  );
-})();
 
 /* ----------------------------- HELPERS ----------------------------- */
 function fullName(res){ if(!res) return ''; return [res.firstName, res.middleName? res.middleName[0]+'.':'', res.lastName, res.suffix||''].filter(Boolean).join(' ').replace(/\s+/g,' '); }
@@ -248,7 +296,7 @@ function currentResident(){ return DB.residents.find(r=>r.id===SESSION.userId); 
 function currentAdmin(){ return DB.admins.find(a=>a.id===SESSION.userId); }
 
 function navigate(hash){ window.location.hash = hash; }
-function logout(){ SESSION.role=null; SESSION.userId=null; navigate('#/login'); }
+function logout(){ SESSION.role=null; SESSION.userId=null; AUTH_TOKEN=null; AUTH_MODE='login'; DB.residents=[]; DB.admins=[]; DB.requests=[]; DB.announcements=[]; navigate('#/login'); }
 
 window.addEventListener('hashchange', render);
 window.addEventListener('DOMContentLoaded', ()=>{ if(!window.location.hash) navigate('#/login'); else render(); });
@@ -261,14 +309,29 @@ function guard(){
   return true;
 }
 
-function render(){
+async function render(){
   if(!guard()) return;
   const hash = window.location.hash || '#/login';
   const app = document.getElementById('app');
   closeAllModals(false);
 
   if(hash==='#/login' || hash==='' ){ app.innerHTML = renderLogin(); bindLogin(); return; }
-  if(hash.startsWith('#/certificate/')){ const id = hash.split('/')[2]; app.innerHTML = renderCertificatePage(id); bindCertificatePage(id); return; }
+  if(hash.startsWith('#/certificate/')){
+    const id = hash.split('/')[2];
+    app.innerHTML = `<div class="login-wrap"><div class="card card-pad">Loading certificate...</div></div>`;
+    try {
+      const data = await api('/certificates/'+id);
+      const mappedReq = mapRequest(data.request);
+      const mappedRes = mapResident(data.resident);
+      const i1 = DB.requests.findIndex(x=>x.id===mappedReq.id); if (i1>=0) DB.requests[i1]=mappedReq; else DB.requests.push(mappedReq);
+      const i2 = DB.residents.findIndex(x=>x.id===mappedRes.id); if (i2>=0) DB.residents[i2]=mappedRes; else DB.residents.push(mappedRes);
+      app.innerHTML = renderCertificatePage(id);
+      bindCertificatePage(id);
+    } catch (err) {
+      app.innerHTML = `<div class="login-wrap"><div class="card card-pad">${err.message || 'Could not load this certificate.'}</div></div>`;
+    }
+    return;
+  }
 
   if(hash.startsWith('#/resident')){ renderResidentShell(hash); return; }
   if(hash.startsWith('#/admin')){ renderAdminShell(hash); return; }
@@ -383,27 +446,36 @@ function bindLogin(){
   authToggle.forEach(b=>b.addEventListener('click', ()=>{ AUTH_MODE=b.dataset.mode; LOGIN_ERROR=''; render(); }));
 
   const loginForm = document.getElementById('loginForm');
-  if (loginForm) loginForm.addEventListener('submit', e=>{
+  if (loginForm) loginForm.addEventListener('submit', async e=>{
     e.preventDefault();
     const fd = new FormData(e.target);
     const username = fd.get('username').trim();
     const password = fd.get('password');
-    if(LOGIN_ROLE==='resident'){
-      const res = DB.residents.find(r=>r.username===username && r.password===password);
-      if(!res){ LOGIN_ERROR='Invalid username or password.'; render(); return; }
-      if(res.status!=='Active'){ LOGIN_ERROR='This account has been deactivated. Please visit the Barangay Hall.'; render(); return; }
-      SESSION.role='resident'; SESSION.userId=res.id; LOGIN_ERROR='';
-      navigate('#/resident/dashboard');
-    } else {
-      const ad = DB.admins.find(a=>a.username===username && a.password===password);
-      if(!ad){ LOGIN_ERROR='Invalid staff username or password.'; render(); return; }
-      SESSION.role='admin'; SESSION.userId=ad.id; LOGIN_ERROR='';
-      navigate('#/admin/dashboard');
+    const submitBtn = loginForm.querySelector('button[type=submit]');
+    submitBtn.disabled = true; submitBtn.textContent = 'Signing in...';
+    try {
+      const data = await api('/auth/login', { method:'POST', body: JSON.stringify({ username, password, role: LOGIN_ROLE }) });
+      AUTH_TOKEN = data.token;
+      if (LOGIN_ROLE === 'resident') {
+        const me = mapResident(data.user);
+        DB.residents = [me];
+        SESSION.role = 'resident'; SESSION.userId = me.id;
+      } else {
+        const me = mapAdmin(data.user);
+        DB.admins = [me];
+        SESSION.role = 'admin'; SESSION.userId = me.id;
+      }
+      LOGIN_ERROR = '';
+      await loadInitialData(LOGIN_ROLE);
+      navigate(LOGIN_ROLE === 'resident' ? '#/resident/dashboard' : '#/admin/dashboard');
+    } catch (err) {
+      LOGIN_ERROR = err.message || 'Login failed.';
+      render();
     }
   });
 
   const registerForm = document.getElementById('registerForm');
-  if (registerForm) registerForm.addEventListener('submit', e=>{
+  if (registerForm) registerForm.addEventListener('submit', async e=>{
     e.preventDefault();
     const fd = new FormData(e.target);
     const b = Object.fromEntries(fd.entries());
@@ -411,20 +483,23 @@ function bindLogin(){
 
     if (b.password !== b.confirmPassword) { LOGIN_ERROR='Passwords do not match.'; render(); return; }
     if (b.password.length < 6) { LOGIN_ERROR='Password must be at least 6 characters.'; render(); return; }
-    if (DB.residents.some(r=>r.username===b.username)) { LOGIN_ERROR='That username is already taken. Please choose another.'; render(); return; }
 
-    const newResident = {
-      id: uid('r'), username: b.username, password: b.password,
-      firstName: b.firstName, middleName: b.middleName||'', lastName: b.lastName, suffix: b.suffix||'',
-      birthdate: b.birthdate, sex: b.sex, civilStatus: b.civilStatus, purok: b.purok,
-      address: `${b.purok}, Barangay Capacuhan`, contactNumber: b.contactNumber, email: b.email||'',
-      occupation: '', yearsOfResidency: 0, dateRegistered: new Date().toISOString().slice(0,10), status: 'Active',
-      photoDataUrl: '', bio: '',
-    };
-    DB.residents.push(newResident);
-    REGISTER_DRAFT = {}; LOGIN_ERROR=''; AUTH_MODE='login';
-    render();
-    toast('Account created! You can now log in.');
+    const submitBtn = registerForm.querySelector('button[type=submit]');
+    submitBtn.disabled = true; submitBtn.textContent = 'Creating account...';
+    try {
+      const data = await api('/auth/register', { method:'POST', body: JSON.stringify(b) });
+      AUTH_TOKEN = data.token;
+      const me = mapResident(data.user);
+      DB.residents = [me];
+      SESSION.role = 'resident'; SESSION.userId = me.id;
+      REGISTER_DRAFT = {}; LOGIN_ERROR = '';
+      await loadInitialData('resident');
+      toast('Account created! Welcome, ' + me.firstName + '.');
+      navigate('#/resident/dashboard');
+    } catch (err) {
+      LOGIN_ERROR = err.message || 'Registration failed.';
+      render();
+    }
   });
 }
 
@@ -659,23 +734,20 @@ function bindConditionalFields(){
 }
 
 async function submitRequest(dt, res, formEl){
-  const fd = new FormData(formEl);
-  const formData = {};
-  for(const f of dt.fields){
-    if(f.type==='file'){
-      const file = fd.get(f.name);
-      if(file && file.size>0){ formData[f.name] = await fileToDataUrl(file); formData[f.name+'_name']=file.name; }
-    } else {
-      formData[f.name] = fd.get(f.name) || '';
-    }
+  const submitBtn = formEl.querySelector('button[type=submit]');
+  const fd = new FormData(formEl); // disabled prefill fields are auto-excluded by the browser
+  fd.append('docKey', dt.key);
+  submitBtn.disabled = true; submitBtn.textContent = 'Submitting...';
+  try {
+    await api('/requests', { method:'POST', body: fd });
+    await refreshMyRequests();
+    closeAllModals();
+    toast('Request submitted! Track it under "My Requests".');
+    navigate('#/resident/requests');
+  } catch (err) {
+    submitBtn.disabled = false; submitBtn.textContent = 'Submit Request';
+    toast(err.message || 'Failed to submit request.', true);
   }
-  const id = uid('rq');
-  const seq = DB.requests.length+1001;
-  const now = new Date().toISOString();
-  DB.requests.unshift({ id, refNo:'BCMS-'+new Date().getFullYear()+'-'+seq, residentId:res.id, docType:dt.key, formData, status:'Pending', dateRequested:now, dateUpdated:now, remarks:'' });
-  closeAllModals();
-  toast('Request submitted! Track it under "My Requests".');
-  navigate('#/resident/requests');
 }
 
 function closeAllModals(rerender=true){
@@ -754,7 +826,7 @@ function openRequestDetailModal(reqId, isAdmin){
           ${dt.fields.map(f=>{
             const v = r.formData[f.name];
             if(f.type==='file'){
-              return v ? `<div class="pgi"><div class="l">${f.label}</div><div class="v"><a href="${v}" target="_blank" style="color:var(--green);font-weight:600;">${r.formData[f.name+'_name']||'View file'}</a></div></div>` : '';
+              return v ? `<div class="pgi"><div class="l">${f.label}</div><div class="v"><a href="${fileUrl(v)}" target="_blank" style="color:var(--green);font-weight:600;">${r.formData[f.name+'_name']||'View file'}</a></div></div>` : '';
             }
             return v ? `<div class="pgi"><div class="l">${f.label}</div><div class="v">${escapeHtml(String(v))}</div></div>` : '';
           }).join('')}
@@ -836,9 +908,16 @@ function bindProfile(res){
     const file = photoInput.files[0];
     if (!file) return;
     if (file.size > 3*1024*1024) { toast('Image too large. Please choose a photo under 3MB.', true); return; }
-    res.photoDataUrl = await fileToDataUrl(file);
-    toast('Profile photo updated.');
-    render();
+    const fd = new FormData();
+    fd.append('photo', file);
+    try {
+      const updated = await api('/residents/me', { method:'PATCH', body: fd });
+      Object.assign(res, mapResident(updated));
+      toast('Profile photo updated.');
+      render();
+    } catch (err) {
+      toast(err.message || 'Failed to update photo.', true);
+    }
   });
 
   const bioForm = document.getElementById('bioForm');
@@ -846,11 +925,22 @@ function bindProfile(res){
   const bioCount = document.getElementById('bioCount');
   function updateCount(){ if (bioCount && bioTextarea) bioCount.textContent = `${bioTextarea.value.length}/300`; }
   if (bioTextarea) { updateCount(); bioTextarea.addEventListener('input', updateCount); }
-  if (bioForm) bioForm.addEventListener('submit', e=>{
+  if (bioForm) bioForm.addEventListener('submit', async e=>{
     e.preventDefault();
-    res.bio = new FormData(e.target).get('bio').trim();
-    toast('Bio saved.');
-    render();
+    const bio = new FormData(e.target).get('bio').trim();
+    const submitBtn = bioForm.querySelector('button[type=submit]');
+    submitBtn.disabled = true; submitBtn.textContent = 'Saving...';
+    try {
+      const fd = new FormData();
+      fd.append('bio', bio);
+      const updated = await api('/residents/me', { method:'PATCH', body: fd });
+      Object.assign(res, mapResident(updated));
+      toast('Bio saved.');
+      render();
+    } catch (err) {
+      submitBtn.disabled = false; submitBtn.textContent = 'Save Bio';
+      toast(err.message || 'Failed to save bio.', true);
+    }
   });
 
   const btn = document.getElementById('editProfileBtn');
@@ -936,10 +1026,18 @@ function bindAdminDashboard(){
   document.querySelectorAll('[data-hash]').forEach(b=>b.addEventListener('click', ()=>navigate(b.dataset.hash)));
   document.querySelectorAll('[data-manage]').forEach(row=>row.addEventListener('click', ()=>openRequestDetailModal(row.dataset.manage,true)));
   const f = document.getElementById('quickAnnForm');
-  if(f) f.addEventListener('submit', e=>{
+  if(f) f.addEventListener('submit', async e=>{
     e.preventDefault(); const fd=new FormData(e.target);
-    DB.announcements.unshift({id:uid('an'), title:fd.get('title'), body:fd.get('body'), date:new Date().toISOString().slice(0,10), author:currentAdmin().fullName, pinned:false});
-    toast('Announcement published.'); render();
+    const submitBtn = e.target.querySelector('button[type=submit]');
+    submitBtn.disabled = true; submitBtn.textContent = 'Publishing...';
+    try {
+      await api('/announcements', { method:'POST', body: JSON.stringify({ title: fd.get('title'), body: fd.get('body'), pinned: false }) });
+      await refreshAnnouncements();
+      toast('Announcement published.'); render();
+    } catch (err) {
+      submitBtn.disabled = false; submitBtn.textContent = 'Publish Announcement';
+      toast(err.message || 'Failed to publish announcement.', true);
+    }
   });
 }
 
@@ -1045,15 +1143,21 @@ function openAdminManageModal(reqId){
   document.getElementById('closeManage').addEventListener('click', ()=>closeAllModals());
   document.getElementById('ovManage').addEventListener('click', e=>{ if(e.target.id==='ovManage') closeAllModals(); });
   document.getElementById('printCertBtn').addEventListener('click', ()=>{ navigate('#/certificate/'+r.id); });
-  document.getElementById('manageForm').addEventListener('submit', e=>{
+  document.getElementById('manageForm').addEventListener('submit', async e=>{
     e.preventDefault();
     const fd = new FormData(e.target);
-    r.status = fd.get('status');
-    r.remarks = fd.get('remarks');
-    r.dateUpdated = new Date().toISOString();
-    closeAllModals();
-    toast('Request updated: '+r.status);
-    render();
+    const submitBtn = e.target.querySelector('button[type=submit]');
+    submitBtn.disabled = true; submitBtn.textContent = 'Saving...';
+    try {
+      await api('/requests/'+r.id, { method:'PATCH', body: JSON.stringify({ status: fd.get('status'), remarks: fd.get('remarks') }) });
+      await refreshAllRequests();
+      closeAllModals();
+      toast('Request updated: '+fd.get('status'));
+      render();
+    } catch (err) {
+      submitBtn.disabled = false; submitBtn.textContent = 'Save Changes';
+      toast(err.message || 'Failed to update request.', true);
+    }
   });
 }
 
@@ -1139,7 +1243,7 @@ function openResidentFormModal(resId){
           <fieldset><legend>Portal Account</legend>
             <div class="field-row">
               <div class="field"><label>Username</label><input type="text" name="username" required value="${r?r.username:''}"></div>
-              <div class="field"><label>Password</label><input type="text" name="password" required value="${r?r.password:'resident123'}"></div>
+              <div class="field"><label>Password</label><input type="text" name="password" ${editing?'':'required'} value="" placeholder="${editing?'Leave blank to keep current password':'Set a password'}"></div>
             </div>
             ${editing? `<div class="field"><label>Account Status</label><select name="status"><option ${r.status==='Active'?'selected':''}>Active</option><option ${r.status==='Deactivated'?'selected':''}>Deactivated</option></select></div>`:''}
           </fieldset>
@@ -1155,18 +1259,28 @@ function openResidentFormModal(resId){
   document.getElementById('ovRes').addEventListener('click', e=>{ if(e.target.id==='ovRes') closeAllModals(); });
   const vh = document.getElementById('viewHistoryBtn');
   if(vh) vh.addEventListener('click', ()=>{ ADMIN_REQ_FILTER={status:'All',doc:'All',q:fullName(r)}; closeAllModals(); navigate('#/admin/requests'); });
-  document.getElementById('resForm').addEventListener('submit', e=>{
+  document.getElementById('resForm').addEventListener('submit', async e=>{
     e.preventDefault();
     const fd = new FormData(e.target);
     const data = Object.fromEntries(fd.entries());
-    if(editing){ Object.assign(r, data); toast('Resident profile updated.'); }
-    else {
-      const newRes = Object.assign({id:uid('r'), dateRegistered:new Date().toISOString().slice(0,10), status:'Active', address:'', photoDataUrl:'', bio:''}, data);
-      newRes.address = newRes.purok+', Barangay Capacuhan';
-      DB.residents.push(newRes);
-      toast('Resident account created.');
+    if (!data.password) delete data.password; // empty = keep existing password on edit
+    const submitBtn = e.target.querySelector('button[type=submit]');
+    submitBtn.disabled = true; submitBtn.textContent = editing ? 'Saving...' : 'Creating...';
+    try {
+      if (editing) {
+        await api('/residents/'+r.id, { method:'PUT', body: JSON.stringify(data) });
+        toast('Resident profile updated.');
+      } else {
+        if (!data.password) { toast('Password is required for a new account.', true); submitBtn.disabled=false; submitBtn.textContent='Create Account'; return; }
+        await api('/residents', { method:'POST', body: JSON.stringify(data) });
+        toast('Resident account created.');
+      }
+      await refreshResidents();
+      closeAllModals(); render();
+    } catch (err) {
+      submitBtn.disabled = false; submitBtn.textContent = editing ? 'Save Changes' : 'Create Account';
+      toast(err.message || 'Failed to save resident.', true);
     }
-    closeAllModals(); render();
   });
 }
 
@@ -1197,9 +1311,17 @@ function adminAnnHtml(){
 }
 function bindAdminAnnPage(){
   document.getElementById('newAnnBtn').addEventListener('click', ()=>openAnnModal(null));
-  document.querySelectorAll('[data-pin]').forEach(b=>b.addEventListener('click', ()=>{ const a=DB.announcements.find(x=>x.id===b.dataset.pin); a.pinned=!a.pinned; render(); }));
+  document.querySelectorAll('[data-pin]').forEach(b=>b.addEventListener('click', async ()=>{
+    const a=DB.announcements.find(x=>x.id===b.dataset.pin);
+    try { await api('/announcements/'+a.id, { method:'PUT', body: JSON.stringify({ pinned: !a.pinned }) }); await refreshAnnouncements(); render(); }
+    catch(err){ toast(err.message || 'Failed to update announcement.', true); }
+  }));
   document.querySelectorAll('[data-editann]').forEach(b=>b.addEventListener('click', ()=>openAnnModal(b.dataset.editann)));
-  document.querySelectorAll('[data-delann]').forEach(b=>b.addEventListener('click', ()=>{ if(confirm('Delete this announcement?')){ DB.announcements = DB.announcements.filter(x=>x.id!==b.dataset.delann); render(); } }));
+  document.querySelectorAll('[data-delann]').forEach(b=>b.addEventListener('click', async ()=>{
+    if(!confirm('Delete this announcement?')) return;
+    try { await api('/announcements/'+b.dataset.delann, { method:'DELETE' }); await refreshAnnouncements(); render(); }
+    catch(err){ toast(err.message || 'Failed to delete announcement.', true); }
+  }));
 }
 function openAnnModal(annId){
   const editing = !!annId;
@@ -1221,11 +1343,20 @@ function openAnnModal(annId){
   </div>`;
   document.getElementById('closeAnn').addEventListener('click', ()=>closeAllModals());
   document.getElementById('ovAnn').addEventListener('click', e=>{ if(e.target.id==='ovAnn') closeAllModals(); });
-  document.getElementById('annForm').addEventListener('submit', e=>{
+  document.getElementById('annForm').addEventListener('submit', async e=>{
     e.preventDefault(); const fd=new FormData(e.target);
-    if(editing){ a.title=fd.get('title'); a.body=fd.get('body'); a.pinned=!!fd.get('pinned'); toast('Announcement updated.'); }
-    else { DB.announcements.unshift({id:uid('an'), title:fd.get('title'), body:fd.get('body'), date:new Date().toISOString().slice(0,10), author:currentAdmin().fullName, pinned:!!fd.get('pinned')}); toast('Announcement published.'); }
-    closeAllModals(); render();
+    const submitBtn = e.target.querySelector('button[type=submit]');
+    submitBtn.disabled = true; submitBtn.textContent = editing ? 'Saving...' : 'Publishing...';
+    const payload = { title: fd.get('title'), body: fd.get('body'), pinned: !!fd.get('pinned') };
+    try {
+      if (editing) { await api('/announcements/'+a.id, { method:'PUT', body: JSON.stringify(payload) }); toast('Announcement updated.'); }
+      else { await api('/announcements', { method:'POST', body: JSON.stringify(payload) }); toast('Announcement published.'); }
+      await refreshAnnouncements();
+      closeAllModals(); render();
+    } catch (err) {
+      submitBtn.disabled = false; submitBtn.textContent = editing ? 'Save Changes' : 'Publish Announcement';
+      toast(err.message || 'Failed to save announcement.', true);
+    }
   });
 }
 

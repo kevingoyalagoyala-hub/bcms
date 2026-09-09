@@ -41,6 +41,7 @@ CREATE TABLE IF NOT EXISTS residents (
   occupation        VARCHAR(150)  NULL,
   years_of_residency INT          NOT NULL DEFAULT 0,
   photo_path        VARCHAR(255)  NULL,
+  bio               TEXT          NULL,
   status            ENUM('Active','Deactivated') NOT NULL DEFAULT 'Active',
   date_registered   DATE          NOT NULL DEFAULT (CURRENT_DATE),
   created_at        TIMESTAMP     NOT NULL DEFAULT CURRENT_TIMESTAMP,

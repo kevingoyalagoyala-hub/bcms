@@ -3,10 +3,12 @@
 Backend API for the **Brgy Capacuhan Management System (BCMS)**, Barangay Capacuhan,
 Oquendo District, Calbayog City, Samar.
 
-The included `frontend/index.html` is a self-contained demo that keeps all data in
-memory (it resets on page reload). This backend gives you a real, persistent
-version: MySQL storage, password hashing, JWT authentication, and file uploads for
-ID photos / valid IDs / DTI documents / Solo Parent ID attachments.
+The frontend (`frontend/`) is already wired to this API — it calls these endpoints
+directly via `fetch()` (see `API_BASE` at the top of `frontend/js/app.js`). This
+backend gives you real, persistent storage: MySQL, password hashing, JWT
+authentication, and file uploads for ID photos / valid IDs / DTI documents /
+Solo Parent ID attachments — or use `mock-server.js` below to run everything with
+zero database setup.
 
 ---
 
@@ -16,6 +18,22 @@ ID photos / valid IDs / DTI documents / Solo Parent ID attachments.
 - MySQL 8+ (or MariaDB 10.5+)
 
 ## 2. Setup
+
+### Option A — Quick start, no database install (great for trying it out today)
+
+```bash
+cd backend
+npm install
+node mock-server.js
+```
+
+That's it — a fully working API on `http://localhost:4000` backed by in-memory data
+(no MySQL needed). The frontend already points here by default, so open
+`frontend/index.html` and everything works end-to-end: register, log in, submit
+requests, approve them as admin, print certificates. **Data resets every time you
+restart this server** — use it for demos and development, not for real records.
+
+### Option B — Real MySQL backend (persistent data, for actual deployment)
 
 ```bash
 cd backend
@@ -50,19 +68,26 @@ Uploaded files (2x2 photos, valid IDs, DTI docs, etc.) are saved under
 
 **Change the seeded admin password immediately after your first login in production.**
 
-## 3. Wiring up the frontend
+## 3. How the frontend connects to this API
 
-`frontend/app.js` currently reads/writes an in-memory `DB` object (see the top of
-the file). To connect it to this backend:
+`frontend/js/app.js` calls this backend directly:
 
-1. Replace the login handler in `bindLogin()` with a `fetch('/api/auth/login', {method:'POST', body: JSON.stringify({username, password, role})})` call; store the returned `token` (e.g. in a JS variable held for the session) and `user`.
-2. Replace `DB.requests`, `DB.residents`, `DB.announcements` reads with `fetch()` calls to the endpoints below, sending `Authorization: Bearer <token>` on every request.
-3. Replace `submitRequest()`'s in-memory push with a `multipart/form-data` `POST /api/requests` (see below) so file uploads reach the server.
-4. Point the certificate page at `GET /api/certificates/:requestId` instead of reading from the in-memory `DB.requests` array.
-
-The JSON shapes returned by the API intentionally mirror the frontend's in-memory
-objects (camelCase in `form_data`/JS, snake_case for SQL columns) to make this swap
-mostly mechanical.
+- **`API_BASE`** (top of the file) points at `http://localhost:4000/api` by default.
+  Change it if your backend runs elsewhere — or set `window.BCMS_API_BASE` in
+  `index.html` before `app.js` loads (handy for pointing a deployed frontend at a
+  deployed backend without editing the JS file).
+- **`api()`** is a small `fetch()` wrapper used everywhere: it attaches the JWT
+  (`Authorization: Bearer <token>`) once you're logged in, and throws a readable
+  error (shown as a toast) if the request fails or the server is unreachable.
+- **`mapResident()` / `mapAdmin()` / `mapRequest()` / `mapAnnouncement()`** convert
+  the API's snake_case MySQL columns into the camelCase shape the UI uses.
+- **`DB`** (residents/requests/announcements arrays) is a client-side cache
+  hydrated from the API right after login (`loadInitialData()`), and refreshed
+  after every create/update/delete (`refreshResidents()`, `refreshAllRequests()`,
+  etc.) — so the UI always reflects what's actually on the server.
+- File uploads (request attachments, profile photos) are sent as real
+  `multipart/form-data`, not base64 — see `submitRequest()` and the photo handler
+  in `bindProfile()` for the pattern if you add more file fields later.
 
 ## 4. API Reference
 
@@ -73,6 +98,7 @@ All endpoints are prefixed with `/api`. Protected endpoints require header:
 | Method | Endpoint | Access | Description |
 |---|---|---|---|
 | POST | `/auth/login` | public | `{username, password, role: 'resident'\|'admin'}` → `{token, user}` |
+| POST | `/auth/register` | public | Resident self-registration. `{firstName, lastName, middleName?, suffix?, birthdate, sex, civilStatus, purok, contactNumber, email?, username, password}` → `{token, user}` (auto-logs-in) |
 | GET | `/auth/me` | authenticated | Returns the current account's profile |
 
 ### Residents
@@ -83,6 +109,7 @@ All endpoints are prefixed with `/api`. Protected endpoints require header:
 | POST | `/residents` | admin | Create a resident account |
 | PUT | `/residents/:id` | admin | Edit a resident's profile/account |
 | PATCH | `/residents/:id/status` | admin | `{status: 'Active'\|'Deactivated'}` |
+| PATCH | `/residents/me` | resident (self) | Update your own photo and/or bio only. `multipart/form-data`: `photo` (file, optional), `bio` (text, optional). Official fields (name, address, etc.) are intentionally not editable here. |
 
 ### Document Requests
 | Method | Endpoint | Access | Description |
